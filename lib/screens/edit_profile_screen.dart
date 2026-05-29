@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/firestore_service.dart';
 import '../state/app_state.dart';
+
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -13,6 +16,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   static const gold = Color(0xFFC9A84C);
 
   final _formKey = GlobalKey<FormState>();
+  final FirestoreService _firestoreService = FirestoreService();
+
   late TextEditingController _name;
   late TextEditingController _phone;
   late TextEditingController _dob;
@@ -21,10 +26,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _pincode;
   String _gender = '';
   bool _saving = false;
+  bool _initialized = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Only init controllers once to avoid resetting on rebuilds
+    if (_initialized) return;
+    _initialized = true;
     final user = AppStateProvider.of(context).currentUser;
     _name = TextEditingController(text: user?.name ?? '');
     _phone = TextEditingController(text: user?.phone ?? '');
@@ -46,13 +55,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.dispose();
   }
 
-  void _save() async {
+  // ── Save to Firestore ───────────────────────────────────────────────────
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
 
-    final state = AppStateProvider.of(context);
-    final updated = state.currentUser!.copyWith(
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (uid.isEmpty) {
+      setState(() => _saving = false);
+      return;
+    }
+
+    final appState = AppStateProvider.of(context);
+    final existing = appState.currentUser;
+
+    final updated = UserProfile(
       name: _name.text.trim(),
+      email: existing?.email ?? '',
       phone: _phone.text.trim(),
       gender: _gender,
       dob: _dob.text.trim(),
@@ -61,11 +80,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       pincode: _pincode.text.trim(),
     );
 
-    // Simulate a brief save delay for realism
-    await Future.delayed(const Duration(milliseconds: 400));
-    if (!mounted) return;
+    await _firestoreService.updateUserProfile(uid, updated);
 
-    state.updateProfile(updated);
+    // Also update local AppState so top bar greeting refreshes
+    appState.updateProfile(updated);
+
+    if (!mounted) return;
     setState(() => _saving = false);
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -108,25 +128,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Top bar
+            // Top bar — unchanged
             Container(
               color: Colors.white,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(
                 children: [
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
-                    child: const Icon(Icons.arrow_back_ios,
-                        size: 18, color: navyBlue),
+                    child: const Icon(
+                      Icons.arrow_back_ios,
+                      size: 18,
+                      color: navyBlue,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   const Expanded(
-                    child: Text('Edit Profile',
-                        style: TextStyle(
-                            color: navyBlue,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600)),
+                    child: Text(
+                      'Edit Profile',
+                      style: TextStyle(
+                        color: navyBlue,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                   GestureDetector(
                     onTap: _saving ? null : _save,
@@ -135,12 +160,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             width: 20,
                             height: 20,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: navyBlue))
-                        : const Text('Save',
+                              strokeWidth: 2,
+                              color: navyBlue,
+                            ),
+                          )
+                        : const Text(
+                            'Save',
                             style: TextStyle(
-                                color: navyBlue,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600)),
+                              color: navyBlue,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                   ),
                 ],
               ),
@@ -153,7 +184,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   key: _formKey,
                   child: Column(
                     children: [
-                      // Avatar
+                      // Avatar — unchanged
                       Container(
                         color: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 24),
@@ -166,8 +197,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 decoration: BoxDecoration(
                                   color: navyBlue,
                                   shape: BoxShape.circle,
-                                  border:
-                                      Border.all(color: gold, width: 2),
+                                  border: Border.all(color: gold, width: 2),
                                 ),
                                 child: Center(
                                   child: Text(
@@ -175,9 +205,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                         ? _name.text[0].toUpperCase()
                                         : '?',
                                     style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 30,
-                                        fontWeight: FontWeight.w700),
+                                      color: Colors.white,
+                                      fontSize: 30,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -191,10 +222,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     color: gold,
                                     shape: BoxShape.circle,
                                     border: Border.all(
-                                        color: Colors.white, width: 2),
+                                      color: Colors.white,
+                                      width: 2,
+                                    ),
                                   ),
-                                  child: const Icon(Icons.edit,
-                                      size: 11, color: Colors.white),
+                                  child: const Icon(
+                                    Icons.edit,
+                                    size: 11,
+                                    color: Colors.white,
+                                  ),
                                 ),
                               ),
                             ],
@@ -203,7 +239,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Personal details card
+                      // Personal details card — unchanged
                       _card(
                         title: 'Personal Details',
                         children: [
@@ -237,41 +273,51 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Gender',
-                                    style: TextStyle(
-                                        color: Color(0xFF6B7280),
-                                        fontSize: 12)),
+                                const Text(
+                                  'Gender',
+                                  style: TextStyle(
+                                    color: Color(0xFF6B7280),
+                                    fontSize: 12,
+                                  ),
+                                ),
                                 const SizedBox(height: 8),
                                 Row(
-                                  children: ['Male', 'Female', 'Other']
-                                      .map((g) {
+                                  children: ['Male', 'Female', 'Other'].map((
+                                    g,
+                                  ) {
                                     final selected = _gender == g;
                                     return GestureDetector(
-                                      onTap: () =>
-                                          setState(() => _gender = g),
+                                      onTap: () => setState(() => _gender = g),
                                       child: Container(
                                         margin: const EdgeInsets.only(
-                                            right: 10),
+                                          right: 10,
+                                        ),
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 16, vertical: 8),
+                                          horizontal: 16,
+                                          vertical: 8,
+                                        ),
                                         decoration: BoxDecoration(
                                           color: selected
                                               ? navyBlue
                                               : Colors.white,
                                           border: Border.all(
-                                              color: selected
-                                                  ? navyBlue
-                                                  : const Color(
-                                                      0xFFD1D5DB)),
-                                          borderRadius:
-                                              BorderRadius.circular(20),
+                                            color: selected
+                                                ? navyBlue
+                                                : const Color(0xFFD1D5DB),
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
                                         ),
-                                        child: Text(g,
-                                            style: TextStyle(
-                                                color: selected
-                                                    ? Colors.white
-                                                    : navyBlue,
-                                                fontSize: 13)),
+                                        child: Text(
+                                          g,
+                                          style: TextStyle(
+                                            color: selected
+                                                ? Colors.white
+                                                : navyBlue,
+                                            fontSize: 13,
+                                          ),
+                                        ),
                                       ),
                                     );
                                   }).toList(),
@@ -285,40 +331,46 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Date of Birth',
-                                    style: TextStyle(
-                                        color: Color(0xFF6B7280),
-                                        fontSize: 12)),
+                                const Text(
+                                  'Date of Birth',
+                                  style: TextStyle(
+                                    color: Color(0xFF6B7280),
+                                    fontSize: 12,
+                                  ),
+                                ),
                                 const SizedBox(height: 8),
                                 GestureDetector(
                                   onTap: _pickDob,
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal: 14, vertical: 12),
+                                      horizontal: 14,
+                                      vertical: 12,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: const Color(0xFFFAFAFA),
                                       border: Border.all(
-                                          color:
-                                              const Color(0xFFD1D5DB)),
-                                      borderRadius:
-                                          BorderRadius.circular(10),
+                                        color: const Color(0xFFD1D5DB),
+                                      ),
+                                      borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Row(
                                       children: [
                                         const Icon(
-                                            Icons.calendar_today_outlined,
-                                            size: 16,
-                                            color: Color(0xFF6B7280)),
+                                          Icons.calendar_today_outlined,
+                                          size: 16,
+                                          color: Color(0xFF6B7280),
+                                        ),
                                         const SizedBox(width: 10),
                                         Text(
                                           _dob.text.isNotEmpty
                                               ? _dob.text
                                               : 'Select date of birth',
                                           style: TextStyle(
-                                              color: _dob.text.isNotEmpty
-                                                  ? navyBlue
-                                                  : Colors.grey,
-                                              fontSize: 14),
+                                            color: _dob.text.isNotEmpty
+                                                ? navyBlue
+                                                : Colors.grey,
+                                            fontSize: 14,
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -331,7 +383,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Address card
+                      // Address card — unchanged
                       _card(
                         title: 'Delivery Address',
                         children: [
@@ -366,30 +418,35 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                       const SizedBox(height: 24),
 
-                      // Save button
+                      // Save button — unchanged
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
                           onPressed: _saving ? null : _save,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: navyBlue,
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 15),
+                            padding: const EdgeInsets.symmetric(vertical: 15),
                             shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                           child: _saving
                               ? const SizedBox(
                                   width: 20,
                                   height: 20,
                                   child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white))
-                              : const Text('Save Changes',
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text(
+                                  'Save Changes',
                                   style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600)),
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                         ),
                       ),
                     ],
@@ -403,8 +460,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  Widget _card(
-      {required String title, required List<Widget> children}) {
+  Widget _card({required String title, required List<Widget> children}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
@@ -415,11 +471,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title,
-              style: const TextStyle(
-                  color: navyBlue,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600)),
+          Text(
+            title,
+            style: const TextStyle(
+              color: navyBlue,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
           const SizedBox(height: 14),
           ...children,
         ],
@@ -442,9 +501,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label,
-              style: const TextStyle(
-                  color: Color(0xFF6B7280), fontSize: 12)),
+          Text(
+            label,
+            style: const TextStyle(color: Color(0xFF6B7280), fontSize: 12),
+          ),
           const SizedBox(height: 8),
           TextFormField(
             controller: controller,
@@ -454,22 +514,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             validator: validator,
             decoration: InputDecoration(
               hintText: hint,
-              hintStyle:
-                  const TextStyle(color: Colors.grey, fontSize: 14),
+              hintStyle: const TextStyle(color: Colors.grey, fontSize: 14),
               prefixIcon: Icon(icon, size: 18, color: const Color(0xFF6B7280)),
               filled: true,
               fillColor: const Color(0xFFFAFAFA),
               contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 12),
+                horizontal: 14,
+                vertical: 12,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide:
-                    const BorderSide(color: Color(0xFFD1D5DB)),
+                borderSide: const BorderSide(color: Color(0xFFD1D5DB)),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide:
-                    const BorderSide(color: Color(0xFFD1D5DB)),
+                borderSide: const BorderSide(color: Color(0xFFD1D5DB)),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),

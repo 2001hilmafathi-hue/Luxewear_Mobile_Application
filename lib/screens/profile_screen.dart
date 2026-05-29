@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/auth_service.dart';
+import '../services/firestore_service.dart';
+import '../state/app_state.dart';
 import '../state/app_state.dart';
 import 'login_screen.dart';
 import 'home_screen.dart';
@@ -13,35 +17,76 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateProvider.of(context);
-    final user = state.currentUser;
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final appState = AppStateProvider.of(context);
+    final firestoreService = FirestoreService();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: SafeArea(
-        child: Column(
-          children: [
-            _topBar(context),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    _avatarSection(context, user),
-                    const SizedBox(height: 12),
-                    _statsRow(state),
-                    const SizedBox(height: 12),
-                    _infoSection(user),
-                    const SizedBox(height: 12),
-                    _menuSection(context, state),
-                    const SizedBox(height: 12),
-                    _logoutSection(context, state),
-                    const SizedBox(height: 20),
-                  ],
-                ),
-              ),
-            ),
-            HomeScreen.buildBottomNav(context, 3),
-          ],
+        // ── Stream profile + orders together ─────────────────────────────
+        child: StreamBuilder<UserProfile?>(
+          stream: uid.isNotEmpty
+              ? firestoreService.getUserProfileStream(uid)
+              : const Stream.empty(),
+          builder: (context, profileSnap) {
+            final user = profileSnap.data;
+
+            return StreamBuilder<List<Order>>(
+              stream: uid.isNotEmpty
+                  ? firestoreService.getOrdersStream(uid)
+                  : const Stream.empty(),
+              builder: (context, ordersSnap) {
+                final orders = ordersSnap.data ?? [];
+
+                return StreamBuilder<List<CartItem>>(
+                  stream: uid.isNotEmpty
+                      ? firestoreService.getCartStream(uid)
+                      : const Stream.empty(),
+                  builder: (context, cartSnap) {
+                    final cartCount = (cartSnap.data ?? []).fold<int>(
+                      0,
+                      (s, i) => s + i.quantity,
+                    );
+                    final totalSpent = orders.fold<double>(
+                      0.0,
+                      (s, o) => s + o.total,
+                    );
+
+                    return Column(
+                      children: [
+                        _topBar(context),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            child: Column(
+                              children: [
+                                _avatarSection(context, user),
+                                const SizedBox(height: 12),
+                                _statsRow(orders.length, cartCount, totalSpent),
+                                const SizedBox(height: 12),
+                                _infoSection(user),
+                                const SizedBox(height: 12),
+                                _menuSection(
+                                  context,
+                                  appState,
+                                  user,
+                                  orders.length,
+                                ),
+                                const SizedBox(height: 12),
+                                _logoutSection(context, appState),
+                                const SizedBox(height: 20),
+                              ],
+                            ),
+                          ),
+                        ),
+                        HomeScreen.buildBottomNav(context, 3),
+                      ],
+                    );
+                  },
+                );
+              },
+            );
+          },
         ),
       ),
     );
@@ -59,18 +104,22 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           const Expanded(
-            child: Text('My Profile',
-                style: TextStyle(
-                    color: navyBlue,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600)),
+            child: Text(
+              'My Profile',
+              style: TextStyle(
+                color: navyBlue,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           GestureDetector(
-            onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const EditProfileScreen())),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+            ),
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
                 color: const Color(0xFFEEF2FF),
                 borderRadius: BorderRadius.circular(20),
@@ -79,11 +128,14 @@ class ProfileScreen extends StatelessWidget {
                 children: [
                   Icon(Icons.edit_outlined, size: 14, color: navyBlue),
                   SizedBox(width: 4),
-                  Text('Edit',
-                      style: TextStyle(
-                          color: navyBlue,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500)),
+                  Text(
+                    'Edit',
+                    style: TextStyle(
+                      color: navyBlue,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -116,9 +168,10 @@ class ProfileScreen extends StatelessWidget {
                         ? user.name[0].toUpperCase()
                         : '?',
                     style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 34,
-                        fontWeight: FontWeight.w700),
+                      color: Colors.white,
+                      fontSize: 34,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
@@ -127,9 +180,11 @@ class ProfileScreen extends StatelessWidget {
                 right: 0,
                 child: GestureDetector(
                   onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const EditProfileScreen())),
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const EditProfileScreen(),
+                    ),
+                  ),
                   child: Container(
                     width: 26,
                     height: 26,
@@ -138,8 +193,11 @@ class ProfileScreen extends StatelessWidget {
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2),
                     ),
-                    child: const Icon(Icons.camera_alt,
-                        size: 12, color: Colors.white),
+                    child: const Icon(
+                      Icons.camera_alt,
+                      size: 12,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ),
@@ -149,9 +207,10 @@ class ProfileScreen extends StatelessWidget {
           Text(
             user?.name.isNotEmpty == true ? user!.name : 'Your Name',
             style: const TextStyle(
-                color: navyBlue,
-                fontSize: 18,
-                fontWeight: FontWeight.w700),
+              color: navyBlue,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -160,30 +219,31 @@ class ProfileScreen extends StatelessWidget {
           ),
           if (user?.phone.isNotEmpty == true) ...[
             const SizedBox(height: 2),
-            Text(user!.phone,
-                style: const TextStyle(
-                    color: Color(0xFF6B7280), fontSize: 13)),
+            Text(
+              user!.phone,
+              style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+            ),
           ],
         ],
       ),
     );
   }
 
-  Widget _statsRow(AppState state) {
+  // ── Stats now passed in from Firestore streams ──────────────────────────
+  Widget _statsRow(int orderCount, int cartCount, double totalSpent) {
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.symmetric(vertical: 16),
       child: Row(
         children: [
-          _stat('${state.orders.length}', 'Orders'),
+          _stat('$orderCount', 'Orders'),
           _vDivider(),
-          _stat('${state.cartCount}', 'In Cart'),
+          _stat('$cartCount', 'In Cart'),
           _vDivider(),
           _stat(
-              state.orders.isNotEmpty
-                  ? '\$${state.orders.fold(0.0, (s, o) => s + o.total).toStringAsFixed(0)}'
-                  : '\$0',
-              'Spent'),
+            totalSpent > 0 ? '\$${totalSpent.toStringAsFixed(0)}' : '\$0',
+            'Spent',
+          ),
         ],
       ),
     );
@@ -193,15 +253,19 @@ class ProfileScreen extends StatelessWidget {
     return Expanded(
       child: Column(
         children: [
-          Text(value,
-              style: const TextStyle(
-                  color: navyBlue,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700)),
+          Text(
+            value,
+            style: const TextStyle(
+              color: navyBlue,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
           const SizedBox(height: 2),
-          Text(label,
-              style: const TextStyle(
-                  color: Color(0xFF6B7280), fontSize: 11)),
+          Text(
+            label,
+            style: const TextStyle(color: Color(0xFF6B7280), fontSize: 11),
+          ),
         ],
       ),
     );
@@ -250,11 +314,14 @@ class ProfileScreen extends StatelessWidget {
         children: [
           const Padding(
             padding: EdgeInsets.fromLTRB(20, 16, 20, 10),
-            child: Text('Personal Information',
-                style: TextStyle(
-                    color: navyBlue,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
+            child: Text(
+              'Personal Information',
+              style: TextStyle(
+                color: navyBlue,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           ...fields.entries.map((e) => _infoRow(e.key, e.value)),
           const SizedBox(height: 4),
@@ -267,28 +334,38 @@ class ProfileScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: Color(0xFFF3F4F6)))),
+        border: Border(bottom: BorderSide(color: Color(0xFFF3F4F6))),
+      ),
       child: Row(
         children: [
           SizedBox(
             width: 110,
-            child: Text(label,
-                style: const TextStyle(
-                    color: Color(0xFF6B7280), fontSize: 13)),
+            child: Text(
+              label,
+              style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+            ),
           ),
           Expanded(
-            child: Text(value,
-                style: const TextStyle(
-                    color: navyBlue,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500)),
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: navyBlue,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _menuSection(BuildContext context, AppState state) {
+  Widget _menuSection(
+    BuildContext context,
+    AppState appState,
+    UserProfile? user,
+    int orderCount,
+  ) {
     return Container(
       color: Colors.white,
       child: Column(
@@ -296,26 +373,27 @@ class ProfileScreen extends StatelessWidget {
           _menuItem(
             Icons.shopping_bag_outlined,
             'My Orders',
-            '${state.orders.length} order(s)',
-            () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const OrdersScreen())),
+            '$orderCount order(s)',
+            () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const OrdersScreen()),
+            ),
           ),
           _menuItem(
             Icons.location_on_outlined,
             'Saved Address',
-            state.currentUser?.address.isNotEmpty == true
-                ? state.currentUser!.city
-                : 'Not set',
-            () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const EditProfileScreen())),
+            user?.address.isNotEmpty == true ? user!.city : 'Not set',
+            () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+            ),
           ),
           _menuItem(
             Icons.lock_outline,
             'Change Password',
             '',
             () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Password change coming soon.')),
+              const SnackBar(content: Text('Password change coming soon.')),
             ),
           ),
           _menuItem(
@@ -323,8 +401,7 @@ class ProfileScreen extends StatelessWidget {
             'Help & Support',
             'help@luxewear.com',
             () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Email us at help@luxewear.com')),
+              const SnackBar(content: Text('Email us at help@luxewear.com')),
             ),
           ),
         ],
@@ -333,15 +410,18 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Widget _menuItem(
-      IconData icon, String label, String subtitle, VoidCallback onTap) {
+    IconData icon,
+    String label,
+    String subtitle,
+    VoidCallback onTap,
+  ) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
         decoration: const BoxDecoration(
-            border: Border(
-                bottom: BorderSide(color: Color(0xFFF3F4F6)))),
+          border: Border(bottom: BorderSide(color: Color(0xFFF3F4F6))),
+        ),
         child: Row(
           children: [
             Container(
@@ -358,27 +438,33 @@ class ProfileScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label,
-                      style: const TextStyle(
-                          color: navyBlue,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500)),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      color: navyBlue,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                   if (subtitle.isNotEmpty)
-                    Text(subtitle,
-                        style: const TextStyle(
-                            color: Color(0xFF6B7280), fontSize: 11)),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Color(0xFF6B7280),
+                        fontSize: 11,
+                      ),
+                    ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right,
-                size: 18, color: Color(0xFF9CA3AF)),
+            const Icon(Icons.chevron_right, size: 18, color: Color(0xFF9CA3AF)),
           ],
         ),
       ),
     );
   }
 
-  Widget _logoutSection(BuildContext context, AppState state) {
+  Widget _logoutSection(BuildContext context, AppState appState) {
     return Container(
       color: Colors.white,
       child: GestureDetector(
@@ -389,35 +475,43 @@ class ProfileScreen extends StatelessWidget {
             content: const Text('Are you sure you want to sign out?'),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel')),
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
               TextButton(
-                onPressed: () {
-                  state.logout();
+                onPressed: () async {
+                  final authService = AuthService();
+                  await authService.signOut();
+                  appState.logout();
+                  if (!context.mounted) return;
                   Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const LoginScreen()),
-                      (r) => false);
+                    context,
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    (r) => false,
+                  );
                 },
-                child: const Text('Sign Out',
-                    style: TextStyle(color: Colors.red)),
+                child: const Text(
+                  'Sign Out',
+                  style: TextStyle(color: Colors.red),
+                ),
               ),
             ],
           ),
         ),
         child: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           child: const Row(
             children: [
               Icon(Icons.logout, size: 20, color: Colors.red),
               SizedBox(width: 14),
-              Text('Sign Out',
-                  style: TextStyle(
-                      color: Colors.red,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500)),
+              Text(
+                'Sign Out',
+                style: TextStyle(
+                  color: Colors.red,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
         ),

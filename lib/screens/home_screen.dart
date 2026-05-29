@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../state/app_state.dart';
+import '../data/app_data.dart';
+import '../services/firestore_service.dart';
 import 'product_listing_screen.dart';
 import 'product_details_screen.dart';
 import 'cart_screen.dart';
@@ -11,57 +14,71 @@ class HomeScreen extends StatelessWidget {
   static const navyBlue = Color(0xFF1B2F5E);
   static const gold = Color(0xFFC9A84C);
 
-  static const _products = [
-    {
-      'name': 'Classic Blazer',
-      'price': '\$89',
-      'priceVal': 89.0,
-      'emoji': '🧥',
-      'image': 'assets/images/Classic blazer.jpg',
-      'category': 'Men',
-    },
-    {
-      'name': 'Floral Dress',
-      'price': '\$65',
-      'priceVal': 65.0,
-      'emoji': '👗',
-      'image': 'assets/images/Floral Dress.jpg',
-      'category': 'Women',
-    },
-    {
-      'name': 'Slim Chinos',
-      'price': '\$55',
-      'priceVal': 55.0,
-      'emoji': '👖',
-      'image': 'assets/images/Slim Chinos.jpg',
-      'category': 'Men',
-    },
-    {
-      'name': 'Silk Blouse',
-      'price': '\$72',
-      'priceVal': 72.0,
-      'emoji': '👚',
-      'image': 'assets/images/Silk Blouse.jpg',
-      'category': 'Women',
-    },
-  ];
+  // ── emoji helper (local, no Firestore needed) ──────────────────────────
+  static String _emojiFor(String category) {
+    switch (category) {
+      case 'Women':
+        return '👗';
+      case 'Kids':
+        return '🧒';
+      case 'Sale':
+        return '🏷️';
+      default:
+        return '🧥'; // Men / fallback
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = AppStateProvider.of(context);
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final firestoreService = FirestoreService();
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: SafeArea(
         child: Column(
           children: [
-            _buildTopBar(context, state),
+            // ── Top bar: cart badge now driven by Firestore ──────────────
+            StreamBuilder<List<CartItem>>(
+              stream: uid.isNotEmpty
+                  ? firestoreService.getCartStream(uid)
+                  : const Stream.empty(),
+              builder: (context, snapshot) {
+                final cartCount = (snapshot.data ?? []).fold<int>(
+                  0,
+                  (s, i) => s + i.quantity,
+                );
+                return _buildTopBar(context, state, cartCount);
+              },
+            ),
             Expanded(
               child: SingleChildScrollView(
                 child: Column(
                   children: [
                     _buildBanner(context),
                     _buildCategories(context),
-                    _buildFeatured(context, state),
+                    // ── Featured: now from Firestore ─────────────────────
+                    StreamBuilder<List<ProductModel>>(
+                      stream: firestoreService.getFeaturedProductsStream(),
+                      builder: (context, snapshot) {
+                        final products = snapshot.data ?? [];
+                        if (snapshot.connectionState ==
+                                ConnectionState.waiting &&
+                            products.isEmpty) {
+                          return const Padding(
+                            padding: EdgeInsets.all(32),
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        return _buildFeatured(
+                          context,
+                          uid,
+                          firestoreService,
+                          products,
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -73,7 +90,8 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildTopBar(BuildContext context, AppState state) {
+  // ── Top bar (cart count passed in from StreamBuilder) ──────────────────
+  Widget _buildTopBar(BuildContext context, AppState state, int cartCount) {
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -113,7 +131,7 @@ class HomeScreen extends StatelessWidget {
                 child: Stack(
                   children: [
                     _iconCircle(Icons.shopping_cart_outlined),
-                    if (state.cartCount > 0)
+                    if (cartCount > 0)
                       Positioned(
                         right: 0,
                         top: 0,
@@ -126,7 +144,7 @@ class HomeScreen extends StatelessWidget {
                           ),
                           child: Center(
                             child: Text(
-                              '${state.cartCount}',
+                              '$cartCount',
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 8,
@@ -239,7 +257,7 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
     );
-  } // closes _buildBanner
+  }
 
   Widget _buildCategories(BuildContext context) {
     final categories = [
@@ -340,7 +358,13 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildFeatured(BuildContext context, AppState state) {
+  // ── Featured section: receives live products from Firestore ─────────────
+  Widget _buildFeatured(
+    BuildContext context,
+    String uid,
+    FirestoreService firestoreService,
+    List<ProductModel> products,
+  ) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -380,20 +404,21 @@ class HomeScreen extends StatelessWidget {
               mainAxisSpacing: 12,
               childAspectRatio: 0.85,
             ),
-            itemCount: _products.length,
+            itemCount: products.length,
             itemBuilder: (context, index) {
-              final p = _products[index];
+              final p = products[index];
+              final emoji = _emojiFor(p.category);
               return GestureDetector(
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => ProductDetailsScreen(
-                      name: p['name'] as String,
-                      price: p['price'] as String,
-                      priceVal: p['priceVal'] as double,
-                      emoji: p['emoji'] as String,
-                      category: p['category'] as String,
-                      image: p['image'] as String?,
+                      name: p.name,
+                      price: '\$${p.price.toStringAsFixed(0)}',
+                      priceVal: p.price,
+                      emoji: emoji,
+                      category: p.category,
+                      image: p.image,
                     ),
                   ),
                 ),
@@ -419,7 +444,7 @@ class HomeScreen extends StatelessWidget {
                               top: Radius.circular(12),
                             ),
                             child: Image.asset(
-                              p['image'] as String,
+                              p.image,
                               width: double.infinity,
                               fit: BoxFit.cover,
                             ),
@@ -435,7 +460,7 @@ class HomeScreen extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  p['name'] as String,
+                                  p.name,
                                   style: const TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w500,
@@ -443,7 +468,7 @@ class HomeScreen extends StatelessWidget {
                                   ),
                                 ),
                                 Text(
-                                  p['price'] as String,
+                                  '\$${p.price.toStringAsFixed(0)}',
                                   style: const TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w500,
@@ -453,24 +478,31 @@ class HomeScreen extends StatelessWidget {
                               ],
                             ),
                             GestureDetector(
-                              onTap: () {
-                                state.addToCart(
-                                  CartItem(
-                                    id: '${p['name']}_M_Navy',
-                                    name: p['name'] as String,
-                                    price: p['price'] as String,
-                                    emoji: p['emoji'] as String,
-                                    priceValue: p['priceVal'] as double,
-                                    size: 'M',
-                                    color: 'Navy',
-                                  ),
+                              onTap: () async {
+                                if (uid.isEmpty) return;
+                                final item = CartItem(
+                                  id: '${p.id}_M_${p.colors.isNotEmpty ? p.colors.first : 'default'}',
+                                  name: p.name,
+                                  price: '\$${p.price.toStringAsFixed(0)}',
+                                  emoji: emoji,
+                                  image: p.image,
+                                  priceValue: p.price,
+                                  size: p.sizes.isNotEmpty
+                                      ? p.sizes.first
+                                      : 'M',
+                                  color: p.colors.isNotEmpty
+                                      ? p.colors.first
+                                      : 'default',
                                 );
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('${p['name']} added to cart'),
-                                    duration: const Duration(seconds: 1),
-                                  ),
-                                );
+                                await firestoreService.addToCart(uid, item);
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('${p.name} added to cart'),
+                                      duration: const Duration(seconds: 1),
+                                    ),
+                                  );
+                                }
                               },
                               child: Container(
                                 width: 24,

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 
 // ─── Models ───────────────────────────────────────────────────────────────────
 
@@ -8,7 +10,7 @@ class CartItem {
   final String name;
   final String price;
   final String emoji;
-  final String? image; // ← ADD
+  final String? image;
   final double priceValue;
   final String size;
   final String color;
@@ -19,12 +21,40 @@ class CartItem {
     required this.name,
     required this.price,
     required this.emoji,
-    this.image, // ← ADD
+    this.image,
     required this.priceValue,
     required this.size,
     required this.color,
     this.quantity = 1,
   });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'price': price,
+      'emoji': emoji,
+      'image': image,
+      'priceValue': priceValue,
+      'size': size,
+      'color': color,
+      'quantity': quantity,
+    };
+  }
+
+  factory CartItem.fromMap(Map<String, dynamic> map, String docId) {
+    return CartItem(
+      id: docId,
+      name: map['name'] as String,
+      price: map['price'] as String,
+      emoji: map['emoji'] as String,
+      image: map['image'] as String?,
+      priceValue: (map['priceValue'] as num).toDouble(),
+      size: map['size'] as String,
+      color: map['color'] as String,
+      quantity: map['quantity'] as int? ?? 1,
+    );
+  }
 }
 
 class OrderItem {
@@ -45,6 +75,30 @@ class OrderItem {
     required this.size,
     required this.color,
   });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'price': price,
+      'emoji': emoji,
+      'image': image,
+      'quantity': quantity,
+      'size': size,
+      'color': color,
+    };
+  }
+
+  factory OrderItem.fromMap(Map<String, dynamic> map) {
+    return OrderItem(
+      name: map['name'] as String,
+      price: map['price'] as String,
+      emoji: map['emoji'] as String,
+      image: map['image'] as String?,
+      quantity: map['quantity'] as int,
+      size: map['size'] as String,
+      color: map['color'] as String,
+    );
+  }
 }
 
 class Order {
@@ -63,6 +117,30 @@ class Order {
     required this.address,
     this.status = 'Processing',
   });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'orderId': orderId,
+      'placedAt': Timestamp.fromDate(placedAt),
+      'items': items.map((i) => i.toMap()).toList(),
+      'total': total,
+      'address': address,
+      'status': status,
+    };
+  }
+
+  factory Order.fromMap(Map<String, dynamic> map, String docId) {
+    return Order(
+      orderId: map['orderId'] as String? ?? docId,
+      placedAt: (map['placedAt'] as Timestamp).toDate(),
+      items: (map['items'] as List)
+          .map((i) => OrderItem.fromMap(i as Map<String, dynamic>))
+          .toList(),
+      total: (map['total'] as num).toDouble(),
+      address: map['address'] as String,
+      status: map['status'] as String? ?? 'Processing',
+    );
+  }
 }
 
 class UserProfile {
@@ -74,7 +152,7 @@ class UserProfile {
   String address;
   String city;
   String pincode;
-  final String password; // kept for auth
+  final String password; // kept for backward compat, not stored in Firestore
 
   UserProfile({
     required this.name,
@@ -85,7 +163,7 @@ class UserProfile {
     required this.address,
     required this.city,
     required this.pincode,
-    required this.password,
+    this.password = '',
   });
 
   UserProfile copyWith({
@@ -107,6 +185,32 @@ class UserProfile {
       city: city ?? this.city,
       pincode: pincode ?? this.pincode,
       password: password,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'email': email,
+      'phone': phone,
+      'gender': gender,
+      'dob': dob,
+      'address': address,
+      'city': city,
+      'pincode': pincode,
+    };
+  }
+
+  factory UserProfile.fromMap(Map<String, dynamic> map) {
+    return UserProfile(
+      name: map['name'] as String? ?? '',
+      email: map['email'] as String? ?? '',
+      phone: map['phone'] as String? ?? '',
+      gender: map['gender'] as String? ?? '',
+      dob: map['dob'] as String? ?? '',
+      address: map['address'] as String? ?? '',
+      city: map['city'] as String? ?? '',
+      pincode: map['pincode'] as String? ?? '',
     );
   }
 }
@@ -148,8 +252,9 @@ class AppState extends ChangeNotifier {
     if (name.trim().isEmpty) return 'Please enter your full name.';
     if (!key.contains('@') || !key.contains('.')) return 'Enter a valid email.';
     if (password.length < 6) return 'Password must be at least 6 characters.';
-    if (_users.containsKey(key))
+    if (_users.containsKey(key)) {
       return 'An account with this email already exists.';
+    }
     final profile = UserProfile(
       name: name.trim(),
       email: key,

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../state/app_state.dart';
+import '../services/auth_service.dart';
 import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -12,12 +12,14 @@ class _LoginScreenState extends State<LoginScreen> {
   bool isLogin = true;
   bool obscurePassword = true;
   bool obscureConfirm = true;
+  bool isLoading = false;
   String? errorMessage;
 
   final nameController = TextEditingController();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   final confirmController = TextEditingController();
+  final AuthService _authService = AuthService();
 
   static const navyBlue = Color(0xFF1B2F5E);
   static const gold = Color(0xFFC9A84C);
@@ -31,32 +33,54 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _submit() {
-    final state = AppStateProvider.of(context);
-    setState(() => errorMessage = null);
+  Future<void> _submit() async {
+    setState(() {
+      errorMessage = null;
+      isLoading = true;
+    });
+
+    String? error;
 
     if (isLogin) {
-      final err = state.login(emailController.text, passwordController.text);
-      if (err != null) {
-        setState(() => errorMessage = err);
-      } else {
-        _goHome();
-      }
+      error = await _authService.signIn(
+        emailController.text,
+        passwordController.text,
+      );
     } else {
       if (passwordController.text != confirmController.text) {
-        setState(() => errorMessage = 'Passwords do not match.');
+        setState(() {
+          errorMessage = 'Passwords do not match.';
+          isLoading = false;
+        });
         return;
       }
-      final err = state.register(
+      error = await _authService.register(
         nameController.text,
         emailController.text,
         passwordController.text,
       );
-      if (err != null) {
-        setState(() => errorMessage = err);
-      } else {
-        _goHome();
-      }
+    }
+
+    if (!mounted) return;
+
+    setState(() => isLoading = false);
+
+    if (error != null) {
+      setState(() => errorMessage = error);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error),
+          backgroundColor: const Color(0xFFDC2626),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(isLogin ? 'Welcome back!' : 'Account created successfully!'),
+          backgroundColor: const Color(0xFF16A34A),
+        ),
+      );
+      _goHome();
     }
   }
 
@@ -210,21 +234,31 @@ class _LoginScreenState extends State<LoginScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: _submit,
+                      onPressed: isLoading ? null : _submit,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: navyBlue,
+                        disabledBackgroundColor: navyBlue.withOpacity(0.6),
                         padding:
                             const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                       ),
-                      child: Text(
-                        isLogin ? 'Sign In' : 'Create Account',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500),
-                      ),
+                      child: isLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              isLogin ? 'Sign In' : 'Create Account',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w500),
+                            ),
                     ),
                   ),
                   const SizedBox(height: 20),

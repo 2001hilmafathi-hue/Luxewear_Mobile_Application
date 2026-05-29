@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../state/app_state.dart';
+import '../services/firestore_service.dart';
 import 'home_screen.dart';
 
 class CartScreen extends StatefulWidget {
@@ -14,6 +16,7 @@ class _CartScreenState extends State<CartScreen> {
   static const gold = Color(0xFFC9A84C);
 
   final _couponController = TextEditingController();
+  final FirestoreService _firestoreService = FirestoreService();
   String? _couponError;
 
   @override
@@ -24,42 +27,82 @@ class _CartScreenState extends State<CartScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateProvider.of(context);
-    final items = state.cartItems;
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final appState = AppStateProvider.of(context);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(context, state, items),
-            Expanded(
-              child: items.isEmpty
-                  ? _buildEmpty(context)
-                  : ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        ...items.map(
-                          (item) => _buildCartItem(context, state, item),
+        child: StreamBuilder<List<CartItem>>(
+          stream: uid.isNotEmpty
+              ? _firestoreService.getCartStream(uid)
+              : const Stream.empty(),
+          builder: (context, snapshot) {
+            final items = snapshot.data ?? [];
+            final isLoading =
+                snapshot.connectionState == ConnectionState.waiting;
+
+            if (isLoading && items.isEmpty) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            // ── Compute totals locally from Firestore items ───────────────
+            final subtotal = items.fold<double>(
+              0,
+              (s, i) => s + i.priceValue * i.quantity,
+            );
+            final double discount = appState.appliedCoupon != null
+                ? subtotal * (_couponRates[appState.appliedCoupon] ?? 0)
+                : 0.0;
+            final double total = (subtotal - discount)
+                .clamp(0.0, double.infinity)
+                .toDouble();
+            final cartCount = items.fold<int>(0, (s, i) => s + i.quantity);
+
+            return Column(
+              children: [
+                _buildTopBar(context, uid, items, cartCount),
+                Expanded(
+                  child: items.isEmpty
+                      ? _buildEmpty(context)
+                      : ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            ...items.map(
+                              (item) => _buildCartItem(context, uid, item),
+                            ),
+                            const SizedBox(height: 8),
+                            _buildCouponBox(context, appState, subtotal),
+                            const SizedBox(height: 8),
+                            _buildSummary(appState, subtotal, discount, total),
+                          ],
                         ),
-                        const SizedBox(height: 8),
-                        _buildCouponBox(context, state),
-                        const SizedBox(height: 8),
-                        _buildSummary(state),
-                      ],
-                    ),
-            ),
-            if (items.isNotEmpty) _buildCheckoutButton(context, state),
-          ],
+                ),
+                if (items.isNotEmpty)
+                  _buildCheckoutButton(
+                    context,
+                    uid,
+                    appState,
+                    items,
+                    cartCount,
+                    total,
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
+  // ── Coupon rates (kept local — no Firestore needed) ────────────────────
+  static const _couponRates = {'LUXE10': 0.10, 'SAVE20': 0.20, 'FIRST15': 0.15};
+
   Widget _buildTopBar(
     BuildContext context,
-    AppState state,
+    String uid,
     List<CartItem> items,
+    int cartCount,
   ) {
     return Container(
       color: Colors.white,
@@ -73,7 +116,7 @@ class _CartScreenState extends State<CartScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'My Cart${items.isNotEmpty ? ' (${state.cartCount})' : ''}',
+              'My Cart${items.isNotEmpty ? ' ($cartCount)' : ''}',
               style: const TextStyle(
                 color: navyBlue,
                 fontSize: 18,
@@ -83,7 +126,7 @@ class _CartScreenState extends State<CartScreen> {
           ),
           if (items.isNotEmpty)
             GestureDetector(
-              onTap: () => _confirmClear(context, state),
+              onTap: () => _confirmClear(context, uid),
               child: const Text(
                 'Clear all',
                 style: TextStyle(color: Colors.red, fontSize: 13),
@@ -94,7 +137,7 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  void _confirmClear(BuildContext context, AppState state) {
+  void _confirmClear(BuildContext context, String uid) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -106,9 +149,9 @@ class _CartScreenState extends State<CartScreen> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              state.clearCart();
+            onPressed: () async {
               Navigator.pop(context);
+              await _firestoreService.clearCart(uid);
             },
             child: const Text('Clear', style: TextStyle(color: Colors.red)),
           ),
@@ -161,7 +204,7 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildCartItem(BuildContext context, AppState state, CartItem item) {
+  Widget _buildCartItem(BuildContext context, String uid, CartItem item) {
     return Dismissible(
       key: Key(item.id),
       direction: DismissDirection.endToStart,
@@ -175,7 +218,7 @@ class _CartScreenState extends State<CartScreen> {
         ),
         child: const Icon(Icons.delete_outline, color: Colors.red, size: 24),
       ),
-      onDismissed: (_) => state.removeFromCart(item.id),
+      onDismissed: (_) => _firestoreService.removeFromCart(uid, item.id),
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(12),
@@ -187,8 +230,6 @@ class _CartScreenState extends State<CartScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Emoji thumbnail
-            // ✅ Replace with
             Container(
               width: 70,
               height: 70,
@@ -227,7 +268,6 @@ class _CartScreenState extends State<CartScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  // Size & Color chips
                   Row(
                     children: [
                       _chip('Size: ${item.size}'),
@@ -247,13 +287,16 @@ class _CartScreenState extends State<CartScreen> {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      // Qty stepper
+                      // ── Qty stepper → Firestore ─────────────────
                       Row(
                         children: [
-                          _qtyBtn(
-                            Icons.remove,
-                            () => state.updateQuantity(item.id, -1),
-                          ),
+                          _qtyBtn(Icons.remove, () async {
+                            await _firestoreService.updateCartQuantity(
+                              uid,
+                              item.id,
+                              item.quantity - 1,
+                            );
+                          }),
                           Container(
                             width: 32,
                             alignment: Alignment.center,
@@ -266,10 +309,13 @@ class _CartScreenState extends State<CartScreen> {
                               ),
                             ),
                           ),
-                          _qtyBtn(
-                            Icons.add,
-                            () => state.updateQuantity(item.id, 1),
-                          ),
+                          _qtyBtn(Icons.add, () async {
+                            await _firestoreService.updateCartQuantity(
+                              uid,
+                              item.id,
+                              item.quantity + 1,
+                            );
+                          }),
                         ],
                       ),
                     ],
@@ -309,7 +355,11 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildCouponBox(BuildContext context, AppState state) {
+  Widget _buildCouponBox(
+    BuildContext context,
+    AppState appState,
+    double subtotal,
+  ) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -329,7 +379,7 @@ class _CartScreenState extends State<CartScreen> {
             ),
           ),
           const SizedBox(height: 10),
-          if (state.appliedCoupon != null)
+          if (appState.appliedCoupon != null)
             Row(
               children: [
                 const Icon(
@@ -340,7 +390,7 @@ class _CartScreenState extends State<CartScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '${state.appliedCoupon} applied — \$${state.couponDiscount.toStringAsFixed(2)} off',
+                    '${appState.appliedCoupon} applied — \$${(subtotal * (_couponRates[appState.appliedCoupon] ?? 0)).toStringAsFixed(2)} off',
                     style: const TextStyle(
                       color: Color(0xFF10B981),
                       fontSize: 13,
@@ -350,11 +400,9 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 GestureDetector(
                   onTap: () {
-                    state.removeCoupon();
+                    appState.removeCoupon();
                     _couponController.clear();
-                    setState(() {
-                      _couponError = null;
-                    });
+                    setState(() => _couponError = null);
                   },
                   child: const Icon(Icons.close, size: 16, color: Colors.grey),
                 ),
@@ -393,10 +441,8 @@ class _CartScreenState extends State<CartScreen> {
                 const SizedBox(width: 10),
                 ElevatedButton(
                   onPressed: () {
-                    final err = state.applyCoupon(_couponController.text);
-                    setState(() {
-                      _couponError = err;
-                    });
+                    final err = appState.applyCoupon(_couponController.text);
+                    setState(() => _couponError = err);
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: navyBlue,
@@ -433,7 +479,12 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildSummary(AppState state) {
+  Widget _buildSummary(
+    AppState appState,
+    double subtotal,
+    double discount,
+    double total,
+  ) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -443,11 +494,7 @@ class _CartScreenState extends State<CartScreen> {
       ),
       child: Column(
         children: [
-          _summaryRow(
-            'Subtotal',
-            '\$${state.cartSubtotal.toStringAsFixed(2)}',
-            false,
-          ),
+          _summaryRow('Subtotal', '\$${subtotal.toStringAsFixed(2)}', false),
           const SizedBox(height: 8),
           _summaryRow(
             'Shipping',
@@ -455,11 +502,11 @@ class _CartScreenState extends State<CartScreen> {
             false,
             valueColor: const Color(0xFF10B981),
           ),
-          if (state.appliedCoupon != null) ...[
+          if (appState.appliedCoupon != null) ...[
             const SizedBox(height: 8),
             _summaryRow(
-              'Discount (${state.appliedCoupon})',
-              '- \$${state.couponDiscount.toStringAsFixed(2)}',
+              'Discount (${appState.appliedCoupon})',
+              '- \$${discount.toStringAsFixed(2)}',
               false,
               valueColor: const Color(0xFF10B981),
             ),
@@ -468,7 +515,7 @@ class _CartScreenState extends State<CartScreen> {
             padding: EdgeInsets.symmetric(vertical: 10),
             child: Divider(height: 1),
           ),
-          _summaryRow('Total', '\$${state.cartTotal.toStringAsFixed(2)}', true),
+          _summaryRow('Total', '\$${total.toStringAsFixed(2)}', true),
         ],
       ),
     );
@@ -494,7 +541,7 @@ class _CartScreenState extends State<CartScreen> {
         Text(
           value,
           style: TextStyle(
-            color: valueColor ?? (bold ? navyBlue : navyBlue),
+            color: valueColor ?? navyBlue,
             fontSize: bold ? 15 : 13,
             fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
           ),
@@ -503,14 +550,28 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildCheckoutButton(BuildContext context, AppState state) {
+  Widget _buildCheckoutButton(
+    BuildContext context,
+    String uid,
+    AppState appState,
+    List<CartItem> items,
+    int cartCount,
+    double total,
+  ) {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
       color: Colors.white,
       child: SizedBox(
         width: double.infinity,
         child: ElevatedButton(
-          onPressed: () => _showCheckoutSheet(context, state),
+          onPressed: () => _showCheckoutSheet(
+            context,
+            uid,
+            appState,
+            items,
+            cartCount,
+            total,
+          ),
           style: ElevatedButton.styleFrom(
             backgroundColor: navyBlue,
             padding: const EdgeInsets.symmetric(vertical: 15),
@@ -519,7 +580,7 @@ class _CartScreenState extends State<CartScreen> {
             ),
           ),
           child: Text(
-            'Checkout  •  \$${state.cartTotal.toStringAsFixed(2)}',
+            'Checkout  •  \$${total.toStringAsFixed(2)}',
             style: const TextStyle(
               color: Colors.white,
               fontSize: 15,
@@ -531,8 +592,15 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  void _showCheckoutSheet(BuildContext context, AppState state) {
-    final user = state.currentUser;
+  void _showCheckoutSheet(
+    BuildContext context,
+    String uid,
+    AppState appState,
+    List<CartItem> items,
+    int cartCount,
+    double total,
+  ) {
+    final user = appState.currentUser;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -560,7 +628,6 @@ class _CartScreenState extends State<CartScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            // Delivery address
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -605,18 +672,43 @@ class _CartScreenState extends State<CartScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            // Items count
             Text(
-              '${state.cartCount} item(s)  •  Total: \$${state.cartTotal.toStringAsFixed(2)}',
+              '$cartCount item(s)  •  Total: \$${total.toStringAsFixed(2)}',
               style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13),
             ),
             const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
-                  state.placeOrder();
-                  Navigator.pop(context); // close sheet
+                onPressed: () async {
+                  // Build order from current Firestore cart items
+                  final address = user?.address.isNotEmpty == true
+                      ? '${user!.address}, ${user.city}'
+                      : 'No address saved';
+                  final order = Order(
+                    orderId:
+                        'LW${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}',
+                    placedAt: DateTime.now(),
+                    items: items
+                        .map(
+                          (c) => OrderItem(
+                            name: c.name,
+                            price: c.price,
+                            emoji: c.emoji,
+                            image: c.image,
+                            quantity: c.quantity,
+                            size: c.size,
+                            color: c.color,
+                          ),
+                        )
+                        .toList(),
+                    total: total,
+                    address: address,
+                  );
+                  await _firestoreService.placeOrder(uid, order);
+                  appState.removeCoupon();
+                  if (!context.mounted) return;
+                  Navigator.pop(context);
                   _showOrderSuccess(context);
                 },
                 style: ElevatedButton.styleFrom(

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../state/app_state.dart';
+import '../services/firestore_service.dart';
 
 class OrdersScreen extends StatelessWidget {
   const OrdersScreen({super.key});
@@ -9,15 +11,15 @@ class OrdersScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateProvider.of(context);
-    final orders = state.orders;
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final firestoreService = FirestoreService();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: SafeArea(
         child: Column(
           children: [
-            // Top bar
+            // Top bar — unchanged
             Container(
               color: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -44,15 +46,26 @@ class OrdersScreen extends StatelessWidget {
               ),
             ),
 
+            // ── Orders list from Firestore ────────────────────────────────
             Expanded(
-              child: orders.isEmpty
-                  ? _buildEmpty(context)
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: orders.length,
-                      itemBuilder: (context, index) =>
-                          _buildOrderCard(context, orders[index], state),
-                    ),
+              child: StreamBuilder<List<Order>>(
+                stream: uid.isNotEmpty
+                    ? firestoreService.getOrdersStream(uid)
+                    : const Stream.empty(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final orders = snapshot.data ?? [];
+                  if (orders.isEmpty) return _buildEmpty(context);
+                  return ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: orders.length,
+                    itemBuilder: (context, index) =>
+                        _buildOrderCard(context, orders[index]),
+                  );
+                },
+              ),
             ),
           ],
         ),
@@ -85,7 +98,7 @@ class OrdersScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildOrderCard(BuildContext context, Order order, AppState state) {
+  Widget _buildOrderCard(BuildContext context, Order order) {
     final statusColor = _statusColor(order.status);
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -147,13 +160,12 @@ class OrdersScreen extends StatelessWidget {
           ),
           const Divider(height: 1),
 
-          // Items
+          // Items — unchanged
           ...order.items.map(
             (item) => Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
                 children: [
-                  // ✅ Replace with
                   Container(
                     width: 48,
                     height: 48,
@@ -217,7 +229,7 @@ class OrdersScreen extends StatelessWidget {
 
           const Divider(height: 1),
 
-          // Footer
+          // Footer — unchanged
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
             child: Row(
@@ -293,6 +305,8 @@ class OrdersScreen extends StatelessWidget {
       'Nov',
       'Dec',
     ];
-    return '${dt.day} ${months[dt.month - 1]} ${dt.year}  ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    return '${dt.day} ${months[dt.month - 1]} ${dt.year}  '
+        '${dt.hour.toString().padLeft(2, '0')}:'
+        '${dt.minute.toString().padLeft(2, '0')}';
   }
 }

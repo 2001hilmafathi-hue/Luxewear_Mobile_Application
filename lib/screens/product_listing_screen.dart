@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../data/app_data.dart';
 import '../state/app_state.dart';
+import '../services/firestore_service.dart';
 import 'product_details_screen.dart';
 import 'home_screen.dart';
 import 'cart_screen.dart';
@@ -15,121 +18,72 @@ class ProductListingScreen extends StatefulWidget {
 class _ProductListingScreenState extends State<ProductListingScreen> {
   static const navyBlue = Color(0xFF1B2F5E);
   static const gold = Color(0xFFC9A84C);
+
   String _sort = 'Default';
+  final FirestoreService _firestoreService = FirestoreService();
 
-  static const _allProducts = [
-    {
-      'name': 'Classic Blazer',
-      'price': r'$89',
-      'priceVal': 89.0,
-      'emoji': '🧥',
-      'category': 'Men',
-      'image': 'assets/images/Classic blazer.jpg',
-    },
-    {
-      'name': 'Slim Chinos',
-      'price': r'$55',
-      'priceVal': 55.0,
-      'emoji': '👖',
-      'category': 'Men',
-      'image': 'assets/images/Slim Chinos.jpg',
-    },
-    {
-      'name': 'Oxford Shirt',
-      'price': r'$48',
-      'priceVal': 48.0,
-      'emoji': '👔',
-      'category': 'Men',
-      'image': 'assets/images/Oxford Shirt.jpg',
-    },
-    {
-      'name': 'Floral Dress',
-      'price': r'$65',
-      'priceVal': 65.0,
-      'emoji': '👗',
-      'category': 'Women',
-      'image': 'assets/images/Floral Dress.jpg',
-    },
-    {
-      'name': 'Silk Blouse',
-      'price': r'$72',
-      'priceVal': 72.0,
-      'emoji': '👚',
-      'category': 'Women',
-      'image': 'assets/images/Silk Blouse.jpg',
-    },
-    {
-      'name': 'Maxi Skirt',
-      'price': r'$58',
-      'priceVal': 58.0,
-      'emoji': '🩱',
-      'category': 'Women',
-      'image': 'assets/images/Maxi Skirt.jpg',
-    },
-    {
-      'name': 'Kids Hoodie',
-      'price': r'$35',
-      'priceVal': 35.0,
-      'emoji': '🧒',
-      'category': 'Kids',
-      'image': "assets/images/Kid's Hoodie.jpg",
-    },
-    {
-      'name': 'Kids Jeans',
-      'price': r'$30',
-      'priceVal': 30.0,
-      'emoji': '👦',
-      'category': 'Kids',
-      'image': 'assets/images/Denim Jeans & Jacket.jpg',
-    },
-    {
-      'name': 'White Embossed Monogram Co-ord Set',
-      'price': r'$22',
-      'priceVal': 22.0,
-      'emoji': '👕',
-      'category': 'Sale',
-      'image': 'assets/images/White Embossed Monogram Co-ord Set.jpg',
-    },
-    {
-      'name': 'WOOD Oversized Tee & Shorts Set',
-      'price': r'$40',
-      'priceVal': 40.0,
-      'emoji': '🩲',
-      'category': 'Sale',
-      'image': 'assets/images/WOOD Oversized Tee & Shorts Set.jpg',
-    },
-  ];
-
-  List<Map<String, Object>> get _filtered {
-    final list = List<Map<String, Object>>.from(
-      _allProducts.where(
-        (p) => widget.category == 'All' || p['category'] == widget.category,
-      ),
-    );
-    if (_sort == 'Price: Low') {
-      list.sort(
-        (a, b) => (a['priceVal'] as double).compareTo(b['priceVal'] as double),
-      );
-    } else if (_sort == 'Price: High') {
-      list.sort(
-        (a, b) => (b['priceVal'] as double).compareTo(a['priceVal'] as double),
-      );
+  static String _emojiFor(String category) {
+    switch (category) {
+      case 'Women':
+        return '👗';
+      case 'Kids':
+        return '🧒';
+      case 'Sale':
+        return '🏷️';
+      default:
+        return '🧥';
     }
-    return list;
+  }
+
+  List<ProductModel> _applySort(List<ProductModel> list) {
+    final sorted = List<ProductModel>.from(list);
+    if (_sort == 'Price: Low') {
+      sorted.sort((a, b) => a.price.compareTo(b.price));
+    } else if (_sort == 'Price: High') {
+      sorted.sort((a, b) => b.price.compareTo(a.price));
+    }
+    return sorted;
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateProvider.of(context);
-    final products = _filtered;
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: SafeArea(
         child: Column(
           children: [
-            _buildTopBar(context, state),
-            Expanded(child: _buildGrid(context, state, products)),
+            // ── Top bar: cart badge from Firestore ────────────────────────
+            StreamBuilder<List<CartItem>>(
+              stream: uid.isNotEmpty
+                  ? _firestoreService.getCartStream(uid)
+                  : const Stream.empty(),
+              builder: (context, snapshot) {
+                final cartCount = (snapshot.data ?? [])
+                    .fold<int>(0, (s, i) => s + i.quantity);
+                return _buildTopBar(context, cartCount);
+              },
+            ),
+            // ── Product grid from Firestore ───────────────────────────────
+            Expanded(
+              child: StreamBuilder<List<ProductModel>>(
+                stream: _firestoreService.getProductsStream(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final all = snapshot.data ?? [];
+                  final filtered = widget.category == 'All'
+                      ? all
+                      : all
+                          .where((p) => p.category == widget.category)
+                          .toList();
+                  final products = _applySort(filtered);
+                  return _buildGrid(context, uid, products);
+                },
+              ),
+            ),
             HomeScreen.buildBottomNav(context, 1),
           ],
         ),
@@ -137,7 +91,7 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
     );
   }
 
-  Widget _buildTopBar(BuildContext context, AppState state) {
+  Widget _buildTopBar(BuildContext context, int cartCount) {
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -145,7 +99,8 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
         children: [
           GestureDetector(
             onTap: () => Navigator.pop(context),
-            child: const Icon(Icons.arrow_back_ios, size: 18, color: navyBlue),
+            child:
+                const Icon(Icons.arrow_back_ios, size: 18, color: navyBlue),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -162,11 +117,9 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
             value: _sort,
             underline: const SizedBox(),
             style: const TextStyle(color: navyBlue, fontSize: 12),
-            items: [
-              'Default',
-              'Price: Low',
-              'Price: High',
-            ].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+            items: ['Default', 'Price: Low', 'Price: High']
+                .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                .toList(),
             onChanged: (v) => setState(() => _sort = v!),
           ),
           const SizedBox(width: 8),
@@ -190,7 +143,7 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
                     color: navyBlue,
                   ),
                 ),
-                if (state.cartCount > 0)
+                if (cartCount > 0)
                   Positioned(
                     right: 0,
                     top: 0,
@@ -203,7 +156,7 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
                       ),
                       child: Center(
                         child: Text(
-                          '${state.cartCount}',
+                          '$cartCount',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 8,
@@ -222,13 +175,11 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
   }
 
   Widget _buildGrid(
-    BuildContext context,
-    AppState state,
-    List<Map<String, Object>> products,
-  ) {
+      BuildContext context, String uid, List<ProductModel> products) {
     if (products.isEmpty) {
       return const Center(
-        child: Text('No products found.', style: TextStyle(color: Colors.grey)),
+        child:
+            Text('No products found.', style: TextStyle(color: Colors.grey)),
       );
     }
     return GridView.builder(
@@ -242,18 +193,20 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
       itemCount: products.length,
       itemBuilder: (context, index) {
         final p = products[index];
+        final emoji = _emojiFor(p.category);
+        final priceStr = '\$${p.price.toStringAsFixed(0)}';
+
         return GestureDetector(
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
-              // ✅ Replace with
               builder: (_) => ProductDetailsScreen(
-                name: p['name'] as String,
-                price: p['price'] as String,
-                priceVal: p['priceVal'] as double,
-                emoji: p['emoji'] as String,
-                category: p['category'] as String,
-                image: p['image'] as String?, // ← ADD THIS
+                name: p.name,
+                price: priceStr,
+                priceVal: p.price,
+                emoji: emoji,
+                category: p.category,
+                image: p.image,
               ),
             ),
           ),
@@ -274,24 +227,17 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
                         top: Radius.circular(12),
                       ),
                     ),
-                    child: p['image'] != null
-                        ? ClipRRect(
-                            borderRadius: const BorderRadius.vertical(
-                              top: Radius.circular(12),
-                            ),
-                            child: Image.asset(
-                              p['image'] as String,
-                              width: double.infinity,
-                              height: double.infinity,
-                              fit: BoxFit.cover,
-                            ),
-                          )
-                        : Center(
-                            child: Text(
-                              p['emoji'] as String,
-                              style: const TextStyle(fontSize: 48),
-                            ),
-                          ),
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(12),
+                      ),
+                      child: Image.asset(
+                        p.image,
+                        width: double.infinity,
+                        height: double.infinity,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
                   ),
                 ),
                 Padding(
@@ -304,7 +250,7 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              p['name'] as String,
+                              p.name,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 12,
@@ -313,7 +259,7 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
                               ),
                             ),
                             Text(
-                              p['price'] as String,
+                              priceStr,
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
@@ -324,20 +270,29 @@ class _ProductListingScreenState extends State<ProductListingScreen> {
                         ),
                       ),
                       GestureDetector(
-                        onTap: () {
-                          // ✅ Replace with
-                          state.addToCart(
-                            CartItem(
-                              id: '${p['name']}_M_Navy',
-                              name: p['name'] as String,
-                              price: p['price'] as String,
-                              emoji: p['emoji'] as String,
-                              image: p['image'] as String?, // ← ADD
-                              priceValue: p['priceVal'] as double,
-                              size: 'M',
-                              color: 'Navy',
-                            ),
+                        onTap: () async {
+                          if (uid.isEmpty) return;
+                          final item = CartItem(
+                            id: '${p.id}_${p.sizes.isNotEmpty ? p.sizes.first : 'M'}_${p.colors.isNotEmpty ? p.colors.first : 'default'}',
+                            name: p.name,
+                            price: priceStr,
+                            emoji: emoji,
+                            image: p.image,
+                            priceValue: p.price,
+                            size: p.sizes.isNotEmpty ? p.sizes.first : 'M',
+                            color: p.colors.isNotEmpty
+                                ? p.colors.first
+                                : 'default',
                           );
+                          await _firestoreService.addToCart(uid, item);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('${p.name} added to cart'),
+                                duration: const Duration(seconds: 1),
+                              ),
+                            );
+                          }
                         },
                         child: Container(
                           width: 24,

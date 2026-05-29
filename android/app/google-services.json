@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "982763664170",
+    "project_id": "luxewear-21f21",
+    "storage_bucket": "luxewear-21f21.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:982763664170:android:0e4f0f85538816a064e453",
+        "android_client_info": {
+          "package_name": "com.example.firebaseflutter_application"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBb90NH5gwJh7x6VsUETkL9aWgr0Ik5kSY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

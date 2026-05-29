@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../state/app_state.dart';
+import '../services/firestore_service.dart';
 import 'cart_screen.dart';
 
 class ProductDetailsScreen extends StatefulWidget {
@@ -35,93 +37,29 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   final _sizes = ['XS', 'S', 'M', 'L', 'XL'];
   final _colors = ['Navy', 'Black', 'White', 'Beige'];
 
+  final FirestoreService _firestoreService = FirestoreService();
+
   @override
   Widget build(BuildContext context) {
-    final state = AppStateProvider.of(context);
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
         child: Column(
           children: [
-            // Top bar
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFF3F4F6),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.arrow_back_ios,
-                        size: 16,
-                        color: navyBlue,
-                      ),
-                    ),
-                  ),
-                  const Text(
-                    'Product Details',
-                    style: TextStyle(
-                      color: navyBlue,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const CartScreen()),
-                    ),
-                    child: Stack(
-                      children: [
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFF3F4F6),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.shopping_cart_outlined,
-                            size: 18,
-                            color: navyBlue,
-                          ),
-                        ),
-                        if (state.cartCount > 0)
-                          Positioned(
-                            right: 0,
-                            top: 0,
-                            child: Container(
-                              width: 14,
-                              height: 14,
-                              decoration: const BoxDecoration(
-                                color: gold,
-                                shape: BoxShape.circle,
-                              ),
-                              child: Center(
-                                child: Text(
-                                  '${state.cartCount}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+            // ── Top bar: cart badge from Firestore ────────────────────────
+            StreamBuilder<List<CartItem>>(
+              stream: uid.isNotEmpty
+                  ? _firestoreService.getCartStream(uid)
+                  : const Stream.empty(),
+              builder: (context, snapshot) {
+                final cartCount = (snapshot.data ?? []).fold<int>(
+                  0,
+                  (s, i) => s + i.quantity,
+                );
+                return _buildTopBar(context, cartCount);
+              },
             ),
 
             Expanded(
@@ -130,7 +68,6 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Product image area
-                    // ✅ With this
                     Container(
                       width: double.infinity,
                       height: 260,
@@ -369,7 +306,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
               ),
             ),
 
-            // Bottom add to cart
+            // ── Bottom: Add to Cart → Firestore ───────────────────────────
             Container(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
               decoration: const BoxDecoration(
@@ -401,21 +338,21 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                   const SizedBox(width: 20),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: () {
-                        // ✅ Replace with
-                        state.addToCart(
-                          CartItem(
-                            id: '${widget.name}_${_selectedSize}_$_selectedColor',
-                            name: widget.name,
-                            price: widget.price,
-                            emoji: widget.emoji,
-                            image: widget.image, // ← ADD
-                            priceValue: widget.priceVal,
-                            size: _selectedSize,
-                            color: _selectedColor,
-                            quantity: _quantity,
-                          ),
+                      onPressed: () async {
+                        if (uid.isEmpty) return;
+                        final item = CartItem(
+                          id: '${widget.name}_${_selectedSize}_$_selectedColor',
+                          name: widget.name,
+                          price: widget.price,
+                          emoji: widget.emoji,
+                          image: widget.image,
+                          priceValue: widget.priceVal,
+                          size: _selectedSize,
+                          color: _selectedColor,
+                          quantity: _quantity,
                         );
+                        await _firestoreService.addToCart(uid, item);
+                        if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
@@ -456,6 +393,87 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar(BuildContext context, int cartCount) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: const BoxDecoration(
+                color: Color(0xFFF3F4F6),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.arrow_back_ios,
+                size: 16,
+                color: navyBlue,
+              ),
+            ),
+          ),
+          const Text(
+            'Product Details',
+            style: TextStyle(
+              color: navyBlue,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const CartScreen()),
+            ),
+            child: Stack(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF3F4F6),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.shopping_cart_outlined,
+                    size: 18,
+                    color: navyBlue,
+                  ),
+                ),
+                if (cartCount > 0)
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      width: 14,
+                      height: 14,
+                      decoration: const BoxDecoration(
+                        color: gold,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '$cartCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
