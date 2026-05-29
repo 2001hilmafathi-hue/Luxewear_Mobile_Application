@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # firebaseflutter_application
 
 A new Flutter project.
@@ -15,3 +16,7 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+=======
+# Luxewear_Mobile_Application
+A mobile and web fashion e-commerce application built with Flutter and Firebase. Features include user authentication, shopping cart, order management, and user profile — all powered by Cloud Firestore as the backend.
+>>>>>>> 9d1e18aaf26905ee9deb4c112653b891dcf17da5
